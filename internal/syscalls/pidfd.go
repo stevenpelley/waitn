@@ -1,7 +1,8 @@
-package sys
+package syscalls
 
 import (
 	"fmt"
+	"log"
 
 	"golang.org/x/sys/unix"
 )
@@ -30,13 +31,15 @@ func (fd *Pidfd) Close() error {
 }
 
 // returns a slice of the input fds that are ready for reading, and an error.
+// this remains a fairly "raw" interface.  We won't do anything here to retry in
+// case we returned due to a signal, we just pass the error along.
 func Poll(fds []*Pidfd, timeoutMs int) ([]*Pidfd, error) {
 	pollFds := make([]unix.PollFd, len(fds))
 	for i := range fds {
 		pollFds[i].Fd = int32(fds[i].fd)
 		pollFds[i].Events = unix.POLLIN
 	}
-	_, err := unix.Poll(pollFds, timeoutMs)
+	numReady, err := unix.Poll(pollFds, timeoutMs)
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +52,13 @@ func Poll(fds []*Pidfd, timeoutMs int) ([]*Pidfd, error) {
 		if pollFd.Revents&unix.POLLIN != 0 {
 			readyFds = append(readyFds, fds[i])
 		}
+	}
+
+	if numReady != len(readyFds) {
+		log.Panicf(
+			"number of readyFds does not match Poll()'s numReady. numReady: %v. len(readyFds): %v",
+			numReady,
+			len(readyFds))
 	}
 
 	return readyFds, err

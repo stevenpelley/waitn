@@ -49,3 +49,15 @@ pidfds are file descriptors that are opened either with a call to `clone` or by 
 
 Note that we may still alias pids and accidentally wait on a process with a reused pid.  This would cause us to block longer than expected.  I'm not sure how to resolve this and identify whether we are waiting on the correct process.
 Idea: start all processes, read a timestamp, query `jobs` to see which processes have already exited (don't `waitn` them, just get their exit codes from `wait`).  Pass the timestamp to `waitn` -- all processes must have started prior to that time.
+
+### Example usage from Bash (should be similar for other shells)
+
+#### Block and handle processes one at a time; use starttime to verify process identify
+
+#### Start jobs with concurrency limit; use individual process starttimes
+
+#### Forward SIGTERM; doesn't worry about pid reuse.
+
+## Future
+Take a look at libkqueue as a library to make this portable.  It doesn't look terribly well supported, but may simply be complete.
+Consider whether Go is the right tool.  It's convenient and has remarkably easy access to syscalls for a high level language, but may produce large binaries, have quirks with system calls interacting with goroutines/threads, or otherwise not be accepted by the old school gnu/core utils community.  I suspect Rust, if anything, would be more appropriate, but this is typically the domain of C.
