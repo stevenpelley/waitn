@@ -5,14 +5,14 @@ Provides bash-like "wait -n" functionality as a separate command and with some s
 
 Bash provides `wait` options `-n` and `-p` to help with coordinating multiple subprocesses.
 A brief primer on wait's behavior:
-`wait` with no options or arguments waits until all child processes terminate and returns 0.
-`wait <pid>...` waits until all listed pids terminate and returns the exit code of the last process listed.
-`wait -n` waits until the next child process terminates and returns its error code
-`wait -n <pid>...` waits until the next listed child process terminates and returns its error code
-`-p VARNAME` added to `wait` or `wait -n` assigns to variable `VARNAME` the pid of the completed process.  This is useful for `wait -n` to determine which process finished, but also for all wait variants to help distinguish between a process completing or wait returning due to a trapped signal.  When wait returns due to a trapped signal the indicated variable will be the empty string.
+- `wait` with no options or arguments waits until all child processes terminate and returns 0.
+- `wait <pid>...` waits until all listed pids terminate and returns the exit code of the last process listed.
+- `wait -n` waits until the next child process terminates and returns its error code.
+- `wait -n <pid>...` waits until the next listed child process terminates and returns its error code.
+- `-p VARNAME` added to `wait` or `wait -n` assigns to variable `VARNAME` the pid of the completed process.  This is useful for `wait -n` to determine which process finished, but also for all wait variants to help distinguish between a process completing or wait returning due to a trapped signal.  When wait returns due to a trapped signal the indicated variable will be the empty string.
 `wait` will also returned on any trapped/handled signal, returning with exit code 128+signal number (e.g., 120 for SIGINT, 143 for SIGTERM).  Note that child processes may themselves return the same exit code, and so `-p` distinguishes between these cases.
 
-One of the complications of `wait -n` is that it only returns jobs that finish after it is called.  There may be races where jobs finish prior to the first call to `wait -n`, or finish between calls to `wait -n`.  Such jobs will not be returned.  (There is a wide misunderstanding and at least one bug, see https://lists.gnu.org/archive/html/bug-bash/2024-01/msg00137.html).
+A complication of `wait -n` is that it only returns jobs that finish after it is called.  There may be races where jobs finish prior to the first call to `wait -n`, or finish between calls to `wait -n`.  Such jobs will not be returned.  (There is a wide misunderstanding and at least one bug, see https://lists.gnu.org/archive/html/bug-bash/2024-01/msg00137.html; this bug allows _some jobs_ that finished prior to the wait -n call to be returned).
 
 ## Improvements
 Some other improvements may help:
