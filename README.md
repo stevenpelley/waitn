@@ -69,10 +69,152 @@ Note that we may still alias pids and accidentally wait on a process with a reus
 ### Example usage from Bash (should be similar for other shells)
 
 #### Block and handle processes one at a time
+see examples/simple.sh
+```
+declare -A pids
+{ sleep 1; exit 1; } &
+pids[$!]=1
+{ sleep 2; exit 2; } &
+pids[$!]=2
+{ sleep 3; exit 3; } &
+pids[$!]=3
+
+wait_for_job() {
+    pid=$(waitn "${!pids[@]}")
+    ret=$?
+    [ $ret -eq 0 ] || { echo "bad waitn: $ret"; exit 1; }
+
+    wait -p finished_pid $pid
+    wait_ret=$?
+    [ -n "$finished_pid" ] || { echo "bad wait for $pid: $finished_pid"; exit 2; }
+    [ $finished_pid -eq $pid ] || { echo "pid -ne finished_pid: $pid $finished_pid"; exit 3; }
+
+    # handle the job finishing however you like
+    echo "FINISHED $val exit code $wait_ret @${SECONDS}"
+    unset pids[$pid]
+}
+
+while [ ${#pids[@]} -gt 0 ]; do
+    wait_for_job
+done
+```
 
 #### Start jobs with concurrency limit
+see examples/limit_concurrency.sh
+```
+declare -A pids
+limit=3
+remaining_tasks=($(seq 0 9))
+
+# modifies remaining_tasks and pids
+# returns 0 if a new task was started and 1 otherwise.
+# this does not test the concurrency limit
+start_task_if_remaining() {
+    [ "${#remaining_tasks[@]}" -eq 0 ] && return 1
+    task=${remaining_tasks[0]}
+    remaining_tasks=("${remaining_tasks[@]:1}")
+    # give some different sleep durations
+    sleep_dur=$(( ($task%3)+1 ))
+    echo "STARTING $task, sleep $sleep_dur @${SECONDS}"
+    { sleep $sleep_dur; exit $task; } &
+    pids[$!]=$task
+    return 0
+}
+
+# identical to simple.sh
+wait_for_job() {
+    pid=$(waitn "${!pids[@]}")
+    ret=$?
+    [ $ret -eq 0 ] || { echo "bad waitn: $ret"; exit 1; }
+
+    wait -p finished_pid $pid
+    wait_ret=$?
+    [ -n "$finished_pid" ] || { echo "bad wait for $pid: $finished_pid"; exit 2; }
+    [ $finished_pid -eq $pid ] || { echo "pid -ne finished_pid: $pid $finished_pid"; exit 3; }
+
+    # handle the job finishing however you like
+    val="${pids[$pid]}"
+    echo "FINISHED $val exit code $wait_ret @${SECONDS}"
+    unset pids[$pid]
+}
+
+while [ ${#remaining_tasks[@]} -gt 0 ] || [ ${#pids[@]} -gt 0 ]; do
+    # start processes until we get up to the limit
+    while [ ${#pids[@]} -lt $limit ] && start_task_if_remaining ; do : ; done
+    wait_for_job
+done
+```
 
 #### Forward SIGTERM
+see examples/forward_sigterm.sh
+```
+# we'll sleep 2 and then kill
+declare -A pids
+# finishes prior to kill
+{ sleep 1; exit 1; } &
+pids[$!]=1
+# still running when killed
+{ sleep 3; exit 2; } &
+pids[$!]=2
+
+# assume temp file name is written to $waitn_file
+on_exit() {
+    [ -n "$waitn_file" ] && rm -f "$waitn_file"
+}
+trap on_exit EXIT
+# waitn writes its result to this temp file
+waitn_file=$(mktemp)
+
+wait_for_job() {
+    # we must run waitn in the bg and await it in order to allow the signal
+    # handler to run
+    waitn "${!pids[@]}" > $waitn_file &
+    waitn_pid=$!
+    while : ; do
+        unset finished_waitn_pid
+        wait -p finished_waitn_pid $waitn_pid
+        ret=$?
+        [ -n "$finished_waitn_pid" ] && break
+        # otherwise we woke and the trap handler ran
+    done
+    [ $ret -eq 0 ] || { echo "bad waitn: $ret"; exit 1; }
+    pid=$(cat "$waitn_file")
+
+    # the rest is the same as simple.sh
+    wait -p finished_pid $pid
+    wait_ret=$?
+    [ -n "$finished_pid" ] || { echo "bad wait for $pid: $finished_pid"; exit 2; }
+    [ $finished_pid -eq $pid ] || { echo "pid -ne finished_pid: $pid $finished_pid"; exit 3; }
+
+    # handle the job finishing however you like
+    echo "FINISHED $val exit code $wait_ret @${SECONDS}"
+    unset pids[$pid]
+}
+
+handled_term=false
+term_handler() {
+    handled_term=true
+    echo "killing jobs from handler @${SECONDS}"
+    kill -TERM "${!pids[@]}"
+}
+trap term_handler TERM
+
+sleep 2 && echo "killing bash! @${SECONDS}" && kill -TERM $$ &
+
+while [ ${#pids[@]} -gt 0 ]; do
+    wait_for_job
+done
+
+if $handled_term; then
+    # reset
+    trap - TERM
+    # term self after having forwarded and joining all children
+    kill -TERM $$
+fi
+
+# bash should print "Terminated" and end.
+# you can also query $? for 143 (128 + 15 where SIGTERM is 15)
+```
 
 ## Future
 Take a look at libkqueue as a library to make this portable.  It doesn't look terribly well supported, but may simply be complete.
