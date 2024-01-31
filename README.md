@@ -60,13 +60,24 @@ return values:
 127 - other, typically argument parsing error.
 ```
 
-### Implementation
-Linux now provides https://man7.org/linux/man-pages/man2/pidfd_open.2.html
-pidfds are file descriptors that are opened either with a call to `clone` or by pid with `pidfd_open`.  Their original purpose is to avoid unsafe of `signal` where a process terminates, its pid is reused, and the signal sent to the incorrect process of the same pid.  One can open a pidfd to a child process and if you haven't awaited that process you can guarantee that it refers to the correct process (even if it has terminated it is a zombie process since it hasn't been awaited).  From that point you may safely signal the process using the pidfd and it will never alias to another process.  Pidfds also allow polling/epolling the status of a process -- when the process terminates the fd is available for reading.
+### Building
+If you have go installed
+```
+> go build ./cmd/waitn
+```
+If you don't want to install go but you do have Docker
+```
+> make
+```
 
-Note that we may still alias pids and accidentally wait on a process with a reused pid.  This would cause us to block longer than expected.  In the future this can be addressed by locating a start timestamp for each process and passing it to wait, but this increases complexity substantially and this is a Linux-wide problem; I'm not going to solve it here.
+### Implementation
+Linux now provides https://man7.org/linux/man-pages/man2/pidfd_open.2.html.
+pidfds are file descriptors that are opened with a call to `clone`, by pid with `pidfd_open`, or by opening the associated `/proc/<pid>` directory.  Their original purpose is to avoid unsafe signalling where a process terminates, its pid is reused, and the signal sent to the incorrect process of the same pid.  One can open a pidfd to a child process and if you haven't awaited that process you can guarantee that it refers to the correct process (even if it has terminated it is a zombie process since it hasn't been awaited).  From that point you may safely signal the process using the pidfd and it will never alias to another process.  Pidfds also allow polling/epolling the termination of a process -- when the process terminates the fd is available for reading.  More specifically, pidfds allow polling the termination of a _non-child_ process, which is what we rely on here.
+
+Note that we may still alias pids and accidentally wait on a process with a reused pid.  This would cause us to block longer than expected.  In the future this can be addressed by locating a start timestamp for each process and passing it to wait, but this increases complexity substantially and this is a Linux-wide problem; I'm not going to solve it here.  If you're worried I recommend using the `-timeout` flag to periodically poll `jobs` and make sure some process didn't finish without you being made aware.
 
 ### Example usage from Bash (should be similar for other shells)
+Note that most of these would work identically with bash's `wait -n` today.  With waitn you can do the same in zsh/sh!
 
 #### Drop in replacement for "wait -n"
 see /examples/common.sh
@@ -324,6 +335,9 @@ done
 ```
 
 ## Future
-Take a look at libkqueue as a library to make this portable.  It doesn't look terribly well supported, but may simply be complete.
-I could also call bsd's libc from cgo directly.  Windows appears to have the needed syscalls as well.
-Consider whether Go is the right tool.  It's convenient and has remarkably easy access to syscalls for a high level language, but may produce large binaries, have quirks with system calls interacting with goroutines/threads, or otherwise not be accepted by the old school gnu/core utils community.  I suspect Rust, if anything, would be more appropriate, but this is typically the domain of C.
+This is just a demonstration and proof of concept.  For widespread adoption consider:
+- if go is the right tool.  Other languages may be more portable.
+- if there are common libraries that can provide pidfd-like behavior across OSes.  libkqueue is a contender.
+- there's not much testing here, and some syscall errors simply panic.  I didn't think much beyond this because it works for a demonstration.
+- handling pid aliasing.  The way I see it this is a Unix-wide problem.  Pidfs provide a reliable means of referring to a process, but not of _naming_ a process.  We still need process names for commands (wait, kill) and to communicate about processes (logs, general human interaction involving processes).
+- but... something might also be done by looking at process starttime in /proc/<pid>/stat field 22.  I _think_ this is a time, in CLK_TCK, corresponding to clock_gettime CLOCK_BOOTTIME.  One could start a number of processes, read from CLOCK_BOOTTIME (possibly verify that all process starttimes were before the read time), and pass this time to waitn.  Waitn would open pidfds, read the starttimes of all processes, and for any with starttime after the read time conclude it must be a new process.  If mixing process start times you could also pass the starttime along with pids.  I started down this road, put some code in internal/proc/stat.go, and backed out; it's cumbersome enough that I don't think people will use it.  I'm also not terribly confident in the approach (what clock is read to set the process starttime?  It's done in the kernel and is difficult to trace)
