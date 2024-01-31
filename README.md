@@ -276,6 +276,53 @@ fi
 # you can also query $? for 143 (128 + 15 where SIGTERM is 15)
 ```
 
+#### Job Finish Order
+see examples/finish_order.sh.
+Note that the case where a job terminates due to SIGTERM prior to the call to
+waitn doesn't work in bash as of the time of this writing.
+```
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source $(realpath "$SCRIPT_DIR/common.sh")
+
+# we want jobs that exit normally before and after we call waitn, and jobs that
+# terminate due to SIGTERM before and after waitn
+# we'll call waitn at time 3
+declare -A pids
+
+{ sleep 1; exit 1; } &
+pids[$!]=1
+
+# to be killed at time 2
+{ sleep 10; exit 2; } &
+kill_at_2=$!
+pids[$kill_at_2]=2
+{ sleep 2; kill $kill_at_2; } &
+
+{ sleep 4; exit 3; } &
+pids[$!]=3
+
+# to be killed at time 5
+{ sleep 10; exit 4; } &
+kill_at_5=$!
+pids[$kill_at_5]=4
+{ sleep 5; kill $kill_at_5; } &
+
+sleep 3
+
+# same as simple.sh
+wait_for_job() {
+    local finished_pid
+    waitn -p finished_pid "${!pids[@]}"
+    wait_ret=$?
+    echo "FINISHED ${pids[$finished_pid]} exit code $wait_ret @${SECONDS}"
+    unset pids[$finished_pid]
+}
+
+while [ ${#pids[@]} -gt 0 ]; do
+    wait_for_job
+done
+```
+
 ## Future
 Take a look at libkqueue as a library to make this portable.  It doesn't look terribly well supported, but may simply be complete.
 I could also call bsd's libc from cgo directly.  Windows appears to have the needed syscalls as well.
