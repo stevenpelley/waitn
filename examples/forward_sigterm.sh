@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
 
-# skip if waitn is in your path
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-waitn_path=$(realpath "$SCRIPT_DIR/../waitn")
-waitn() {
-    "$waitn_path" $@
-}
+source $(realpath "$SCRIPT_DIR/common.sh")
 
 # we'll sleep 2 and then kill
 declare -A pids
@@ -16,38 +12,16 @@ pids[$!]=1
 { sleep 3; exit 2; } &
 pids[$!]=2
 
-# assume temp file name is written to $waitn_file
-on_exit() {
-    [ -n "$waitn_file" ] && rm -f "$waitn_file"
-}
-trap on_exit EXIT
-# waitn writes its result to this temp file
-waitn_file=$(mktemp)
-
+# we kill from the SIGTERM handler, so here we just skip wait waking up due to
+# signal.  We're return 1 to indicate this, but we don't actually use it.
 wait_for_job() {
-    # we must run waitn in the bg and await it in order to allow the signal
-    # handler to run
-    waitn "${!pids[@]}" > $waitn_file &
-    waitn_pid=$!
-    while : ; do
-        unset finished_waitn_pid
-        wait -p finished_waitn_pid $waitn_pid
-        ret=$?
-        [ -n "$finished_waitn_pid" ] && break
-        # otherwise we woke and the trap handler ran
-    done
-    [ $ret -eq 0 ] || { echo "bad waitn: $ret"; exit 1; }
-    pid=$(cat "$waitn_file")
-
-    # the rest is the same as simple.sh
-    wait -p finished_pid $pid
+    local finished_pid
+    waitn -p finished_pid "${!pids[@]}"
     wait_ret=$?
-    [ -n "$finished_pid" ] || { echo "bad wait for $pid: $finished_pid"; exit 2; }
-    [ $finished_pid -eq $pid ] || { echo "pid -ne finished_pid: $pid $finished_pid"; exit 3; }
-
-    # handle the job finishing however you like
-    echo "FINISHED $val exit code $wait_ret @${SECONDS}"
-    unset pids[$pid]
+    # this line is new relative to simple.sh
+    [ -z "$finished_pid" ] && return 1
+    echo "FINISHED ${pids[$finished_pid]} exit code $wait_ret @${SECONDS}"
+    unset pids[$finished_pid]
 }
 
 handled_term=false

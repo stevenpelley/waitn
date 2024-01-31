@@ -68,30 +68,118 @@ Note that we may still alias pids and accidentally wait on a process with a reus
 
 ### Example usage from Bash (should be similar for other shells)
 
+#### Drop in replacement for "wait -n"
+see /examples/common.sh
+```
+# you can skip if waitn is in PATH
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+_waitn_path=$(realpath "$SCRIPT_DIR/../waitn")
+
+# set up a temp file for waitn output, as well as an EXIT trap to rm it
+# make sure to save and run any existing EXIT trap
+_cur="$(trap -p EXIT | sed -nr "s/trap -- '(.*)' EXIT\$/\1/p")"
+on_exit() {
+    [ -n "$_waitn_temp_file" ] && rm -f "$_waitn_temp_file"
+    [ -n "$_cur" ] && $_cur
+}
+trap on_exit EXIT
+_waitn_temp_file=$(mktemp)
+
+# set _waitn_path or if waitn is in PATH just call it
+waitn_cmd() {
+    "$_waitn_path" $@
+}
+
+# intended to match bash's "wait -n -p VARNAME pids..."
+# do not pass "-n" flag
+#
+# note that we must take care with namerefs and locals.  If the "pid_var_name"
+# passed to us aliases with any local var here then we end up setting the local
+# instead of a global.
+#
+# all local variables will be prefixed with _waitn_.  The caller must not pass
+# such a variable with -p and doing so will result in an error.
+#
+# rename this if the waitn command is in PATH
+waitn() {
+    # parse out any -p option
+    local _waitn_pid_var_name
+    if [ "$1" = "-p" ]; then
+        _waitn_pid_var_name="$2"
+        if [[ $myvar =~ ^_waitn_ ]]; then
+            echo "-p varname begins with _waitn_.  Such names are restricted to prevent nameref collisions.  Use a different name"
+            exit 1
+        fi
+        unset -n _waitn_pid_var_name
+        shift 2
+    fi
+
+    # run the waitn command
+    waitn_cmd $@ > $_waitn_temp_file &
+    local _waitn_waitn_pid=$!
+    local _waitn_finished_pid
+    # wait for the waitn command
+    wait -p _waitn_finished_pid $_waitn_waitn_pid
+    local _waitn_wait_ret=$?
+
+    if [ -n "$_waitn_finished_pid" ]; then
+        # waitn completed
+
+        # get the exit code of the returned pid
+        local _waitn_pid=$(cat "$_waitn_temp_file")
+        local _waitn_double_check_pid
+        wait -p _waitn_double_check_pid $_waitn_pid
+        local _waitn_ret=$?
+        # assert that we found the same pid
+        if [ -z "$_waitn_double_check_pid" ] || [ "$_waitn_double_check_pid" != "$_waitn_pid" ]; then
+            echo "waiting to get exit code failed. pid: $_waitn_pid. found: $_waitn_double_check_pid"
+            exit 1;
+        fi
+
+        # assign a variable for -p if provided
+        if [ -n $_waitn_pid_var_name ]; then
+            local -g -n _waitn_pid_var_ref="$_waitn_pid_var_name"
+            _waitn_pid_var_ref="$_waitn_pid"
+        fi
+
+        # wait returns the exit code of the awaited process, which is the exit
+        # code of the wait builtin
+        return "$_waitn_ret"
+    else
+        # woke up due to a signal
+        kill "$_waitn_waitn_pid"
+        # wait until waitn definitely returns.  I want to reuse the temp file
+        # without having to recreate it.  We can't risk the old waitn being
+        # around and overwriting the file.
+        while true; do
+            wait -p _waitn_finished_pid $_waitn_waitn_pid
+            [ -n "$_waitn_finished_pid" ] && break
+        done
+
+        # return the original wait_ret, which indicates which signal (128 + signal num)
+        return "$_waitn_wait_ret"
+    fi
+}
+```
+
 #### Block and handle processes one at a time
 see examples/simple.sh
 ```
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source $(realpath "$SCRIPT_DIR/common.sh")
+
 declare -A pids
-{ sleep 1; exit 1; } &
-pids[$!]=1
-{ sleep 2; exit 2; } &
-pids[$!]=2
-{ sleep 3; exit 3; } &
-pids[$!]=3
+# start jobs, populate $pids
+for task in {1..3}; do
+    start_job $task
+done
 
 wait_for_job() {
-    pid=$(waitn "${!pids[@]}")
-    ret=$?
-    [ $ret -eq 0 ] || { echo "bad waitn: $ret"; exit 1; }
-
-    wait -p finished_pid $pid
+    local finished_pid
+    waitn -p finished_pid "${!pids[@]}"
     wait_ret=$?
-    [ -n "$finished_pid" ] || { echo "bad wait for $pid: $finished_pid"; exit 2; }
-    [ $finished_pid -eq $pid ] || { echo "pid -ne finished_pid: $pid $finished_pid"; exit 3; }
-
-    # handle the job finishing however you like
-    echo "FINISHED $val exit code $wait_ret @${SECONDS}"
-    unset pids[$pid]
+    echo "FINISHED ${pids[$finished_pid]} exit code $wait_ret @${SECONDS}"
+    unset pids[$finished_pid]
 }
 
 while [ ${#pids[@]} -gt 0 ]; do
@@ -102,6 +190,9 @@ done
 #### Start jobs with concurrency limit
 see examples/limit_concurrency.sh
 ```
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source $(realpath "$SCRIPT_DIR/common.sh")
+
 declare -A pids
 limit=3
 remaining_tasks=($(seq 0 9))
@@ -113,29 +204,17 @@ start_task_if_remaining() {
     [ "${#remaining_tasks[@]}" -eq 0 ] && return 1
     task=${remaining_tasks[0]}
     remaining_tasks=("${remaining_tasks[@]:1}")
-    # give some different sleep durations
-    sleep_dur=$(( ($task%3)+1 ))
-    echo "STARTING $task, sleep $sleep_dur @${SECONDS}"
-    { sleep $sleep_dur; exit $task; } &
-    pids[$!]=$task
-    return 0
+    # start job, populate $pids
+    start_job $task
 }
 
 # identical to simple.sh
 wait_for_job() {
-    pid=$(waitn "${!pids[@]}")
-    ret=$?
-    [ $ret -eq 0 ] || { echo "bad waitn: $ret"; exit 1; }
-
-    wait -p finished_pid $pid
+    local finished_pid
+    waitn -p finished_pid "${!pids[@]}"
     wait_ret=$?
-    [ -n "$finished_pid" ] || { echo "bad wait for $pid: $finished_pid"; exit 2; }
-    [ $finished_pid -eq $pid ] || { echo "pid -ne finished_pid: $pid $finished_pid"; exit 3; }
-
-    # handle the job finishing however you like
-    val="${pids[$pid]}"
-    echo "FINISHED $val exit code $wait_ret @${SECONDS}"
-    unset pids[$pid]
+    echo "FINISHED ${pids[$finished_pid]} exit code $wait_ret @${SECONDS}"
+    unset pids[$finished_pid]
 }
 
 while [ ${#remaining_tasks[@]} -gt 0 ] || [ ${#pids[@]} -gt 0 ]; do
@@ -148,6 +227,9 @@ done
 #### Forward SIGTERM
 see examples/forward_sigterm.sh
 ```
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+source $(realpath "$SCRIPT_DIR/common.sh")
+
 # we'll sleep 2 and then kill
 declare -A pids
 # finishes prior to kill
@@ -157,38 +239,16 @@ pids[$!]=1
 { sleep 3; exit 2; } &
 pids[$!]=2
 
-# assume temp file name is written to $waitn_file
-on_exit() {
-    [ -n "$waitn_file" ] && rm -f "$waitn_file"
-}
-trap on_exit EXIT
-# waitn writes its result to this temp file
-waitn_file=$(mktemp)
-
+# we kill from the SIGTERM handler, so here we just skip wait waking up due to
+# signal.  We're return 1 to indicate this, but we don't actually use it.
 wait_for_job() {
-    # we must run waitn in the bg and await it in order to allow the signal
-    # handler to run
-    waitn "${!pids[@]}" > $waitn_file &
-    waitn_pid=$!
-    while : ; do
-        unset finished_waitn_pid
-        wait -p finished_waitn_pid $waitn_pid
-        ret=$?
-        [ -n "$finished_waitn_pid" ] && break
-        # otherwise we woke and the trap handler ran
-    done
-    [ $ret -eq 0 ] || { echo "bad waitn: $ret"; exit 1; }
-    pid=$(cat "$waitn_file")
-
-    # the rest is the same as simple.sh
-    wait -p finished_pid $pid
+    local finished_pid
+    waitn -p finished_pid "${!pids[@]}"
     wait_ret=$?
-    [ -n "$finished_pid" ] || { echo "bad wait for $pid: $finished_pid"; exit 2; }
-    [ $finished_pid -eq $pid ] || { echo "pid -ne finished_pid: $pid $finished_pid"; exit 3; }
-
-    # handle the job finishing however you like
-    echo "FINISHED $val exit code $wait_ret @${SECONDS}"
-    unset pids[$pid]
+    # this line is new relative to simple.sh
+    [ -z "$finished_pid" ] && return 1
+    echo "FINISHED ${pids[$finished_pid]} exit code $wait_ret @${SECONDS}"
+    unset pids[$finished_pid]
 }
 
 handled_term=false
