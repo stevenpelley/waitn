@@ -32,10 +32,10 @@ Usage: waitn [-u] [-t <timeout>] <pid>...
   -error-on-unknown
         if any process cannot be found return an error code, not 0
   -t int
-        timeout in ms.  Negative implies no timeout.  Zero means to return immediately if no process is ready
+        shorthand for -timeout
   -timeout int
         timeout in ms.  Negative implies no timeout.  Zero means to return immediately if no process is ready
-  -u    if any process cannot be found return an error code, not 0
+  -u    shorthand for -error-on-unknown
 
 Behavior when no process can be found for a pid is deterministic.  The first
 pid to be not found is returned.  Only then the first process to complete is

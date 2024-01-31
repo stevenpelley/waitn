@@ -81,11 +81,11 @@ func main() {
 func prepare() context.Context {
 	errorOnUnknownUsage := "if any process cannot be found return an error code, not 0"
 	flag.BoolVar(&errorOnUnknown, "error-on-unknown", false, errorOnUnknownUsage)
-	flag.BoolVar(&errorOnUnknown, "u", false, errorOnUnknownUsage)
+	flag.BoolVar(&errorOnUnknown, "u", false, "shorthand for -error-on-unknown")
 
 	timeoutUsage := "timeout in ms.  Negative implies no timeout.  Zero means to return immediately if no process is ready"
 	flag.Int64Var(&timeoutMs, "timeout", 0, timeoutUsage)
-	flag.Int64Var(&timeoutMs, "t", 0, timeoutUsage)
+	flag.Int64Var(&timeoutMs, "t", 0, "shorthand for -timeout")
 
 	flag.Usage = func() {
 		fmt.Fprintln(
