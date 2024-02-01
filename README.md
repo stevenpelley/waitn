@@ -52,7 +52,7 @@ If you don't want to install go but you do have Docker
 See [examples](https://github.com/stevenpelley/waitn/tree/main/examples "examples")
 
 ## Implementation
-Linux now provides https://man7.org/linux/man-pages/man2/pidfd_open.2.html.
+Linux now provides [pidfd_open](https://man7.org/linux/man-pages/man2/pidfd_open.2.html).
 pidfds are file descriptors that are opened with a call to `clone`, by pid with `pidfd_open`, or by opening the associated `/proc/<pid>` directory.  Their original purpose is to avoid unsafe signalling where a process terminates, its pid is reused, and the signal sent to the incorrect process of the same pid.  One can open a pidfd to a child process and if you haven't awaited that process you can guarantee that it refers to the correct process (even if it has terminated it is a zombie process since it hasn't been awaited).  From that point you may safely signal the process using the pidfd and it will never alias to another process.  Pidfds also allow polling/epolling the termination of a process -- when the process terminates the fd is available for reading.  More specifically, pidfds allow polling the termination of a _non-child_ process, which is what we rely on here.
 
 Note that we may still alias pids and accidentally wait on a process with a reused pid.  This would cause us to block longer than expected.  In the future this can be addressed by locating a start timestamp for each process and passing it to wait, but this increases complexity substantially and this is a Linux-wide problem; I'm not going to solve it here.  If you're worried I recommend using the `-timeout` flag to periodically poll `jobs` and make sure some process didn't finish without you being made aware.
