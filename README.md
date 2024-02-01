@@ -1,7 +1,7 @@
 # waitn
 Provides bash-like `wait -n` functionality as a separate command and with some semantic differences.
 
-See [my project page](https://stevenpelley.github.io/waitn/) for an article I wrote about building this project.
+See [my project page](https://stevenpelley.github.io/waitn/article) for an article I wrote about building this project.
 
 ## Usage
 ```
