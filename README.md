@@ -1,6 +1,8 @@
 # waitn
 Provides bash-like `wait -n` functionality as a separate command and with some semantic differences.
 
+See [my project page](https://stevenpelley.github.io/waitn/) for an article I wrote about building this project.
+
 ## Usage
 ```
 wait for the first of several processes to terminate, as in Bash's wait -n.
@@ -47,7 +49,7 @@ If you don't want to install go but you do have Docker
 ```
 
 ## Examples
-See [examples](https://github.com/stevenpelley/waitn/examples "examples")
+See [examples](https://github.com/stevenpelley/waitn/tree/main/examples "examples")
 
 ## Implementation
 Linux now provides https://man7.org/linux/man-pages/man2/pidfd_open.2.html.
