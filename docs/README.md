@@ -1,5 +1,5 @@
 # waitn
-Provides bash-like `wait -n` functionality as a separate command and with some semantic differences.  See the [This Page](https://github.com/stevenpelley/waitn) for usage and source.
+Provides bash-like `wait -n` functionality as a separate command and with some semantic differences.  See [This Page](https://github.com/stevenpelley/waitn) for usage and source.
 
 ## What Problem Does `wait` Solve?
 `wait` is a POSIX shell command allowing you to wait for a specific subprocess to exit, returning its exit code.  It can also be used to wait for numerous subprocesses to finish (or all bg jobs, if no arguments given).
