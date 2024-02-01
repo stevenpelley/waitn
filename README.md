@@ -1,7 +1,20 @@
 # waitn
-Provides bash-like "wait -n" functionality as a separate command and with some semantic differences.
+Provides bash-like `wait -n` functionality as a separate command and with some semantic differences.
 
-## Bash's wait
+## What Problem Does `wait` Solve?
+`wait` is a POSIX shell command allowing you to wait for a specific subprocess to exit, returning its exit code.  It can also be used to wait for numerous subprocesses to finish (or all bg jobs, if no arguments given).
+
+But let's say you want to know as soon as _any_ job finishes.  POSIX `wait` can't do this.  The only shell I'm aware of that provides a mechanism to do this is Bash, with `wait -n`.  `wait -n` returns the next job that finishes, returning its exit code and allowing you to assign its pid to a variable (`-p`).  See `man bash` or if running bash, `help wait`.  This allows you to build scripts that manage simple task queues or manage interacting subprocesses, all while handling signals and responding to subprocesses terminating.  Shell is the simplest way to _start_ subprocesses, so it's be convenient if it also allows you to easily _manager and coordinate_ those subprocesses.
+
+An example: let's say you are building a service that runs inside a Docker container.  You want your container to have multiple processes, for example for legacy constraints or to run Java Flight Recorder or `perf` inside the container.  So you need to:
+1. start all the processes.  The first process is your "main" process.  Others, such as `perf`, need the pid of your main process.  There are dependencies and interaction between processes.
+2. redirect and pipe input and output.  This may be simply to files as logs or for later data processing.
+3. monitor the processes.  If the main process ends then SIGTERM the others and wait for them to terminate as well.  If other processes end then you may choose to restart it, end all processes and stop the container, or simply continue.
+4. handle SIGTERM, propagate it to subprocesses by signalling them in turn, and then wait for them to terminate (as in 3.)
+
+Shell handles the first 2 requirements easily, but without more flexible tooling such as `wait -n` can't handler the latter 2 requirements.  Other languages (in my opinion) may handle subprocess termination and signals better but become cumbersome when creating process pipelines.  For example, Python's `subprocess.run` (https://docs.python.org/3/library/subprocess.html) has 14 keyword arguments and additionally accepts other `Popen` keyword arguments.  In many cases Python `subprocess` is convenient, but it can be overwhelming at first.  Similarly, Python signal handling (https://docs.python.org/3/library/signal.html) is both confusing and error-prone.  Handlers always run on the initial Python thread and run on a stack frame created out of thin air (and so raising an Exception is generally not safe).  I haven't found any good resources describing what happens if Python is in a blocking syscall when the handler runs.  There's perhaps no perfect solution, but shell can be the simplest with the right commands.
+
+## Bash's `wait -n`
 
 Bash provides `wait` options `-n` and `-p` to help with coordinating multiple subprocesses.
 A brief primer on wait's behavior:
@@ -12,18 +25,13 @@ A brief primer on wait's behavior:
 - `-p VARNAME` added to `wait` or `wait -n` assigns to variable `VARNAME` the pid of the completed process.  This is useful for `wait -n` to determine which process finished, but also for all wait variants to help distinguish between a process completing or wait returning due to a trapped signal.  When wait returns due to a trapped signal the indicated variable will be the empty string.
 `wait` will also returned on any trapped/handled signal, returning with exit code 128+signal number (e.g., 120 for SIGINT, 143 for SIGTERM).  Note that child processes may themselves return the same exit code, and so `-p` distinguishes between these cases.
 
-A complication of `wait -n` is that it only returns jobs that finish after it is called.  There may be races where jobs finish prior to the first call to `wait -n`, or finish between calls to `wait -n`.  Such jobs will not be returned.  (There is a wide misunderstanding and at least one bug, see https://lists.gnu.org/archive/html/bug-bash/2024-01/msg00137.html; this bug allows _some jobs_ that finished prior to the wait -n call to be returned).
+A complication of `wait -n` is that it only returns jobs that finish after it is called.  There may be races where jobs finish prior to the first call to `wait -n`, or finish between calls to `wait -n`.  Such jobs will not be returned.  (There is a wide misunderstanding and at least one bug, see https://lists.gnu.org/archive/html/bug-bash/2024-01/msg00137.html; this bug allows _some jobs_ that finished prior to the wait -n call to be returned).  I don't mean to disparage bash by pointing out a bug -- it is the only shell I'm aware of that has the feature I want and that community patiently engaged with me.  Thank you Chet Ramey and the rest of the bash community.
 
-## Improvements
-Some other improvements may help:
-- a timeout option (`-t`): -1 to wait indefinitely (default), 0 to return immediately (nonblocking) -- useful for determining only if any of the named processes are still running, positive value to indicate in (likely) milliseconds how long to wait before returning.
-- an "error on not-found" option (`-e`?): if any provided pid's processes could not be found or are found to already have been terminated then return immediately with an error while still writing the offending pid using `-p`.  The exit code for such processes can still be queried using `wait <pid>`.  This allows the caller to manage their own list of still-running processes by removing from the list any pid returned from previous calls to `wait -e` either because it terminated or could not be found.
-
-## Build this as a separate command
-I'd like to provide the above improvements by building `wait -n` as a separate command.  I see numerous benefits to doing this:
-- this fits with unix's "do one thing and do it well" philosophy.  We already see the addition of options and features to bash's `wait` causing some confusion (internally managed queue/state) and bugs.
-- separation speeds development by decoupling tools and constraints.  I can build such a utility in any language I want instead of C; I don't need to convince the Bash maintainers to accept any change.
-- a separate utility would be useful for other shells that don't support `wait -n` such as posix sh (ash, ksh) or zsh.
+## So What?
+I'd like to improve the situation by building `wait -n` as a separate command.  I see a few benefits:
+- this fits with unix's "do one thing and do it well" philosophy.  We already see the addition of options and features to bash's `wait` causing some confusion (internally managed queue/state; notion of the user being "notified" of subprocess completion) and bugs.
+- separation of shell and commands speeds development by decoupling tools and constraints.  I can build such a utility in any language I want instead of C; I don't need to convince the Bash maintainers to accept any change.  I can experiment and get it wrong and not risk adding features and flags to a cornerstone project such as bash that later need to be adjusted.
+- a separate utility would be useful for other shells that don't support `wait -n` such as posix sh (ash, ksh), zsh, and fish (whose documentation says it similarly waits for the _next_ job to finish; I want it to return the next job _to have finished_).
 
 ## waitn
 ```
