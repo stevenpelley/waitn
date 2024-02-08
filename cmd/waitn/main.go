@@ -5,87 +5,29 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 
-	"github.com/stevenpelley/waitn/internal/syscalls"
-	"golang.org/x/sys/unix"
-)
-
-// exit codes
-const (
-	PROCESS_TERMINATED        = 0
-	PROCESS_NOT_FOUND_SUCCESS = 0
-	PROCESS_NOT_FOUND_ERROR   = 1
-	TIMEOUT_ERROR             = 2
-	INPUT_ERROR               = 127
+	"github.com/stevenpelley/waitn/internal/waitn"
 )
 
 // CLI flags
-var (
+type cliFlags struct {
 	errorOnUnknown bool
 	timeoutMs      int64
-)
-
-func main() {
-	// parses using flag
-	ctx := prepare()
-
-	pids := make([]int, 0)
-	for _, arg := range flag.Args() {
-		pid, err := strconv.Atoi(arg)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "pid not a valid number: %v\n", arg)
-			flag.Usage()
-			os.Exit(INPUT_ERROR)
-		}
-		pids = append(pids, pid)
-	}
-
-	pidfds := make([]*syscalls.Pidfd, len(pids))
-	for i, pid := range pids {
-		pidfd, err := syscalls.Open(pid)
-		if err == unix.ESRCH {
-			exitUnknownProcess(pid, errorOnUnknown)
-		} else if err != nil {
-			panic(err)
-		}
-		defer pidfd.Close()
-		pidfds[i] = pidfd
-	}
-
-	// TODO: handle any retrying necessary, e.g., for signal wakeup.
-	var pollTimeout time.Duration = -1 * time.Millisecond
-	deadline, ok := ctx.Deadline()
-	if ok {
-		pollTimeout = time.Until(deadline)
-		if pollTimeout < 0 {
-			os.Exit(TIMEOUT_ERROR)
-		}
-	}
-
-	readyFds, err := syscalls.Poll(pidfds, int(pollTimeout.Milliseconds()))
-	if err != nil {
-		panic(err)
-	}
-
-	if len(readyFds) == 0 {
-		// timed out
-		os.Exit(TIMEOUT_ERROR)
-	}
-
-	pid := readyFds[0].Pid
-	fmt.Printf("%v\n", pid)
 }
 
-func prepare() context.Context {
+// returns a context for waiting/timeout, a function to cancel that context
+// (should be deferred), and flags from the CLI
+func prepare() (context.Context, context.CancelFunc, cliFlags) {
+	cliFlags := cliFlags{}
+
 	errorOnUnknownUsage := "if any process cannot be found return an error code, not 0"
-	flag.BoolVar(&errorOnUnknown, "error-on-unknown", false, errorOnUnknownUsage)
-	flag.BoolVar(&errorOnUnknown, "u", false, "shorthand for -error-on-unknown")
+	flag.BoolVar(&cliFlags.errorOnUnknown, "error-on-unknown", false, errorOnUnknownUsage)
+	flag.BoolVar(&cliFlags.errorOnUnknown, "u", false, "shorthand for -error-on-unknown")
 
 	timeoutUsage := "timeout in ms.  Negative implies no timeout.  Zero means to return immediately if no process is ready"
-	flag.Int64Var(&timeoutMs, "timeout", 0, timeoutUsage)
-	flag.Int64Var(&timeoutMs, "t", 0, "shorthand for -timeout")
+	flag.Int64Var(&cliFlags.timeoutMs, "timeout", 0, timeoutUsage)
+	flag.Int64Var(&cliFlags.timeoutMs, "t", 0, "shorthand for -timeout")
 
 	flag.Usage = func() {
 		fmt.Fprintln(
@@ -125,24 +67,52 @@ return values:
 	if len(flag.Args()) < 1 {
 		fmt.Fprintln(os.Stderr, "no pids provided")
 		flag.Usage()
-		os.Exit(INPUT_ERROR)
+		os.Exit(waitn.INPUT_ERROR)
 	}
 
 	ctx := context.Background()
-	if timeoutMs > 0 {
-		var timeoutCancelFunc context.CancelFunc
-		ctx, timeoutCancelFunc = context.WithTimeout(
-			ctx, time.Duration(timeoutMs)*time.Millisecond)
-		defer timeoutCancelFunc()
+	var contextCancel context.CancelFunc = func() {}
+	if cliFlags.timeoutMs > 0 {
+		ctx, contextCancel = context.WithTimeout(
+			ctx, time.Duration(cliFlags.timeoutMs)*time.Millisecond)
 	}
-	return ctx
+	return ctx, contextCancel, cliFlags
 }
 
-func exitUnknownProcess(pid int, errorOnUnknown bool) {
-	fmt.Printf("%v\n", pid)
-	retVal := PROCESS_NOT_FOUND_SUCCESS
-	if errorOnUnknown {
-		retVal = PROCESS_NOT_FOUND_ERROR
+func exitIfResultOrError(pid waitn.ResultPid, e error) {
+	if pid != 0 {
+		fmt.Printf("%v\n", pid)
 	}
-	os.Exit(retVal)
+	if e != nil {
+		err, ok := e.(*waitn.ExitError)
+		if !ok {
+			panic(fmt.Sprintf("error is not of type *waitn.ExitError: %v", e))
+		}
+		msg := err.Error()
+		if len(msg) > 0 {
+			fmt.Fprintln(os.Stderr, msg)
+		}
+		if err.DisplayUsage {
+			flag.Usage()
+		}
+		os.Exit(err.ExitCode)
+	}
+	if pid != 0 {
+		os.Exit(waitn.PROCESS_TERMINATED)
+	}
+}
+
+func main() {
+	// parses using flag
+	ctx, ctxCancel, cliFlags := prepare()
+	defer ctxCancel()
+
+	pidFiles, retPid, exitErr := waitn.SetupPidFiles(
+		flag.Args(), cliFlags.errorOnUnknown)
+	exitIfResultOrError(retPid, exitErr)
+
+	retPid, exitErr = waitn.WaitForPidFile(ctx, pidFiles)
+	exitIfResultOrError(retPid, exitErr)
+
+	panic("no result or error at end of main")
 }

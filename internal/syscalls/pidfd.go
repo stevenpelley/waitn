@@ -1,65 +1,68 @@
 package syscalls
 
 import (
+	"errors"
 	"fmt"
-	"log"
+	"os"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
 
-// Not thread safe
-type Pidfd struct {
-	fd  int
-	Pid int
-	// close() should not be retried on error
-	hasClosed bool
+// PidFile must be be started before blocking.
+// it must be closed after finished blocking or whenever finished using.
+type PidFile struct {
+	Pid  int
+	file *os.File
+	conn syscall.RawConn
 }
 
-func Open(pid int) (*Pidfd, error) {
-	fd, err := unix.PidfdOpen(pid, 0)
+// setup/start the process of waiting for the process.
+// PidFiles run as a 2-stop start/block so the caller immediately knows if there
+// is an error creating the file.
+// If no process is found with the provided pid the returned error will satisfy
+// errors.Is(err, unix.ESRCH)
+// a PidFile must be started exactly once.
+func (pf *PidFile) Start() error {
+	if pf.file != nil {
+		panic("PidFile already started")
+	}
+
+	fd, err := unix.PidfdOpen(pf.Pid, unix.PIDFD_NONBLOCK)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return &Pidfd{fd: fd, Pid: pid}, nil
-}
+	pf.file = os.NewFile(uintptr(fd), fmt.Sprintf("pidfd:%v", pf.Pid))
 
-func (fd *Pidfd) Close() error {
-	if !fd.hasClosed {
-		return unix.Close(fd.fd)
+	conn, err := pf.file.SyscallConn()
+	if err != nil {
+		err2 := pf.file.Close()
+		err = errors.Join(err, err2)
+		return err
 	}
+	pf.conn = conn
+
 	return nil
 }
 
-// returns a slice of the input fds that are ready for reading, and an error.
-// this remains a fairly "raw" interface.  We won't do anything here to retry in
-// case we returned due to a signal, we just pass the error along.
-func Poll(fds []*Pidfd, timeoutMs int) ([]*Pidfd, error) {
-	pollFds := make([]unix.PollFd, len(fds))
-	for i := range fds {
-		pollFds[i].Fd = int32(fds[i].fd)
-		pollFds[i].Events = unix.POLLIN
+// block until the process completes. Returns any error from reading the
+// pidfile.  This does _not_ wait/reap the process, nor does it return any exit
+// code or error associated with the process's execution.
+func (pf *PidFile) BlockUntilDoneOrClosed() error {
+	if pf.file == nil {
+		panic("PidFile not started")
 	}
-	numReady, err := unix.Poll(pollFds, timeoutMs)
-	if err != nil {
-		return nil, err
-	}
-	readyFds := make([]*Pidfd, 0)
-	for i, pollFd := range pollFds {
-		if pollFd.Revents&(unix.POLLERR|unix.POLLHUP|unix.POLLNVAL) != 0 {
-			return nil, fmt.Errorf("error polling fd for pid %v. Revents: %v", fds[i].fd, pollFd.Revents)
-		}
+	callCount := 0
+	return pf.conn.Read(func(fd uintptr) (done bool) {
+		// "read" twice (don't ever actually read, pidfd doesn't support)
+		// the first read is not done and so it will poll.
+		// once the poll completes it will read again and we will say done
+		callCount += 1
+		return callCount > 1
+	})
+}
 
-		if pollFd.Revents&unix.POLLIN != 0 {
-			readyFds = append(readyFds, fds[i])
-		}
-	}
-
-	if numReady != len(readyFds) {
-		log.Panicf(
-			"number of readyFds does not match Poll()'s numReady. numReady: %v. len(readyFds): %v",
-			numReady,
-			len(readyFds))
-	}
-
-	return readyFds, err
+// close the pidfile.
+func (pf *PidFile) Close() error {
+	return pf.file.Close()
 }
