@@ -1,5 +1,6 @@
 # waitn
 Provides bash-like `wait -n` functionality as a separate command and with some semantic differences.
+This project currently supports only Linux by relying on pidfds.
 
 See [my project page](https://stevenpelley.github.io/waitn/article) for an article I wrote about building this project.
 
@@ -39,11 +40,11 @@ return values:
 ```
 
 ## Building
-If you have go installed
+If you have Go installed
 ```
 > go build ./cmd/waitn
 ```
-If you don't want to install go but you do have Docker
+If you don't want to install Go but you do have Docker
 ```
 > make
 ```
@@ -59,8 +60,9 @@ Note that we may still alias pids and accidentally wait on a process with a reus
 
 ## Future
 This is just a demonstration and proof of concept.  For widespread adoption consider:
-- if go is the right tool.  Other languages may be more portable.
+- if go is the right tool.  Other languages may be more portable.  I'm impressed by Go's ability to call syscalls and then integrate a non-standard file descriptor into os.File.
+- portability: bsd provides kqueue with filter EVFILT_PROC accepting a PID. Windows has OpenProcessToken and WaitForMultipleObjects.
 - if there are common libraries that can provide pidfd-like behavior across OSes.  libkqueue is a contender.
-- there's not much testing here, and some syscall errors simply panic.  I didn't think much beyond this because it works for a demonstration.
+- any unexpected error panics.  This could be more graceful but at the moment I want force the stack trace on the caller.
 - handling pid aliasing.  The way I see it this is a Unix-wide problem.  Pidfs provide a reliable means of referring to a process, but not of _naming_ a process.  We still need process names for commands (wait, kill) and to communicate about processes (logs, general human interaction involving processes).
 - but... something might also be done by looking at process starttime in /proc/<pid>/stat field 22.  I _think_ this is a time, in CLK_TCK, corresponding to clock_gettime CLOCK_BOOTTIME.  One could start a number of processes, read from CLOCK_BOOTTIME (possibly verify that all process starttimes were before the read time), and pass this time to waitn.  Waitn would open pidfds, read the starttimes of all processes, and for any with starttime after the read time conclude it must be a new process.  If mixing process start times you could also pass the starttime along with pids.  I started down this road, put some code in internal/proc/stat.go, and backed out; it's cumbersome enough that I don't think people will use it.  I'm also not terribly confident in the approach (what clock is read to set the process starttime?  It's done in the kernel and is difficult to trace)
