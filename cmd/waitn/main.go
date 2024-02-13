@@ -48,15 +48,15 @@ waitn may block for the incorrect process with the same pid.
 
 NOTE WELL: this utility uses Linux's pidfd to wait for non-child processes.  It
 is up to you to ensure that the processes you wait for are visible to this call.
-Otherwise you the utility may not find the process, and you may incorrectly
+Otherwise the utility may not find the process, and you may incorrectly
 interpret it as having terminated.  It may also result in a panic.
 
 return values:
 0 - a process was found and completed; or a a process was not found and not
-	--error-on-unknown.  The process presumably completed prior to this command
-1 - --error-on-unknown and a process was not found for some pid.  the pid
+	-error-on-unknown.  The process presumably completed prior to this command
+1 - -error-on-unknown and a process was not found for some pid.  the pid
     will be printed to stdout (not err) as when this flag is not provided.
-2 - --timeout and timeout duration exceeded.  Implies that all processes were
+2 - -timeout and timeout duration exceeded.  Implies that all processes were
 	found
 127 - other, typically argument parsing error.`)
 		fmt.Fprintln(flag.CommandLine.Output())
