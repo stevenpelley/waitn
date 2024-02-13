@@ -52,7 +52,7 @@ equivalent.
 This can also be used to block on a _parent_ process terminating, in cases where
 you want subprocesses to terminate and you don't want to coordinate a SIGHUP.
 
-## Building
+## Building and Development
 If you have Go installed
 ```
 > go build ./cmd/waitn
@@ -61,6 +61,10 @@ If you don't want to install Go but you do have Docker
 ```
 > make
 ```
+
+This project uses a [devcontainer](https://containers.dev/).
+See [VSCode devcontainers](https://code.visualstudio.com/docs/devcontainers/containers) or your IDE's documentation.
+It "works for me" in this setup with Linux 5.3+.
 
 ## Examples
 See [examples](https://github.com/stevenpelley/waitn/tree/main/examples "examples")
