@@ -4,6 +4,8 @@ This project currently supports only Linux by relying on pidfds.
 
 See [my project page](https://stevenpelley.github.io/waitn/article) for an article I wrote about building this project.
 
+I recently discovered that version 2.39 of [util-linux](https://github.com/util-linux/util-linux) contains the new `waitpid` command offering the same functionality as waitn (and also using pidfds).  This is great!  However, it may take some time for this to reach stable versions for many distros (not even in debian unstable as of this writing).  Check your distro's package database for versions.
+
 ## Usage
 ```
 wait for the first of several processes to terminate, as in Bash's wait -n.
