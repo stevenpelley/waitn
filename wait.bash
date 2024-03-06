@@ -43,8 +43,7 @@ waitn() {
     create_temp _waitn_out_fd _waitn_in_fd
 
     # run the waitn command
-    ###wait_cmd $@ >&$_waitn_out_fd 2>&$_waitn_out_fd &
-    wait_cmd $@ >&$_waitn_out_fd &
+    wait_cmd $@ >&$_waitn_out_fd 2>&$_waitn_out_fd &
     local _waitn_waitn_pid=$!
     # wait for the waitn command
     wait $_waitn_waitn_pid
