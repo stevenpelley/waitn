@@ -43,7 +43,7 @@ waitn() {
     create_temp _waitn_out_fd _waitn_in_fd
 
     # run the waitn command
-    wait_cmd $@ >&$_waitn_out_fd 2>&$_waitn_out_fd &
+    wait_cmd $@ >&$_waitn_out_fd 2>&1 &
     local _waitn_waitn_pid=$!
     # wait for the waitn command
     wait $_waitn_waitn_pid
@@ -54,6 +54,8 @@ waitn() {
 
         # get the exit code of the returned pid
         local _waitn_pid=$(wait_cmd_get_pid <&$_waitn_in_fd)
+        exec {_waitn_out_fd}>&-
+        exec {_waitn_in_fd}>&-
 
         wait $_waitn_pid
         local _waitn_ret=$?
@@ -72,6 +74,8 @@ waitn() {
         # BASH before 5.2 cannot use -p to distinguish between wait waking due to signal
         # and process having ended with status > 128
         kill "$_waitn_waitn_pid"
+        exec {_waitn_out_fd}>&-
+        exec {_waitn_in_fd}>&-
 
         # return the original wait_ret, which indicates which signal (128 + signal num)
         return "$_waitn_wait_ret"
